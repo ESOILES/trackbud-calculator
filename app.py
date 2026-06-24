@@ -4,6 +4,7 @@ Exact lookups + portfolio analytics + seasonal on-track checks.
 Never invents data; says "I don't have that" when a query isn't supported.
 """
 import json, os, re
+import requests
 from datetime import datetime
 from flask import Flask, request, jsonify
 
@@ -18,6 +19,10 @@ RECORDS = D["records"]
 STATE_NAMES = D["state_names"]
 SEASON = D["season"]
 SC = D["sealcoat_cutoff"]
+
+# Allowed origin for the tap-to-talk web button (GitHub Pages)
+ALLOWED_ORIGIN = "https://esoiles.github.io"
+DEFAULT_AGENT_ID = "agent_359eadba0e4b30e95703ccbf2b"
 
 CATS = {
     "asphalt": "100% R/R Asphalt Lot", "r and r": "100% R/R Asphalt Lot", "r/r": "100% R/R Asphalt Lot",
@@ -349,6 +354,46 @@ def on_track(ql):
     else:
         out.append("Seal Coat: {} stores still to schedule this season.".format(len(sc_uns)))
     return " ".join(out)
+
+
+# ============================================================
+#  WEB CALL ENDPOINT — powers the tap-to-talk button.
+#  Uses the Retell SECRET key stored in Render's environment
+#  (RETELL_SECRET_KEY). The secret never reaches the browser.
+# ============================================================
+@app.route("/webcall", methods=["POST", "OPTIONS"])
+def webcall():
+    if request.method == "OPTIONS":
+        resp = jsonify({"ok": True})
+        resp.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        return resp
+
+    secret = os.environ.get("RETELL_SECRET_KEY")
+    if not secret:
+        return jsonify({"error": "Server missing RETELL_SECRET_KEY"}), 500
+
+    body = request.get_json(silent=True) or {}
+    agent_id = body.get("agent_id", DEFAULT_AGENT_ID)
+
+    try:
+        r = requests.post(
+            "https://api.retellai.com/v2/create-web-call",
+            headers={"Authorization": "Bearer " + secret, "Content-Type": "application/json"},
+            json={"agent_id": agent_id},
+            timeout=15,
+        )
+    except Exception as e:
+        return jsonify({"error": "Could not reach Retell", "detail": str(e)}), 502
+
+    if r.status_code not in (200, 201):
+        return jsonify({"error": "Retell error", "detail": r.text}), 502
+
+    data = r.json()
+    resp = jsonify({"access_token": data.get("access_token")})
+    resp.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
+    return resp
 
 
 @app.route("/", methods=["GET"])
