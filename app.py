@@ -121,7 +121,6 @@ def store_lookup(num):
     for r in nonstripe:
         b = money(r["bid"]) if r["bid"] is not None else "no bid"
         parts.append("{}, {}, {}.".format(r["category"], b, date_status(parse_date(r["date"]))))
-    # stripe handled by precomputed status (omit when covered by seal coat/sandblast or a center)
     ss = D.get("stripe_status", {}).get(str(num))
     if ss == "striped":
         sr = next((r for r in recs if r["category"] == "Stripe Only" and r["date"]), None)
@@ -132,7 +131,6 @@ def store_lookup(num):
         parts.append("Stripe status needs your review: AC repair with no stripe date.")
     elif ss == "review_dup":
         parts.append("Stripe status needs your review: appears more than once in the stripe list.")
-    # covered / center: stripe omitted on purpose
     return " ".join(parts)
 
 
@@ -149,7 +147,6 @@ def total_and_avg(recs, cat=None, include_zero_slots=False):
     total = sum(r["bid"] for r in recs if r["bid"] is not None)
     stores = set(r["store"] for r in recs if r["bid"] is not None)
     n = len(stores)
-    # seal coat zero-slots: only when explicitly nationwide
     if cat == "Seal Coat & Stripe" and include_zero_slots:
         total += D["seal_zero"]["total"]
         n += D["seal_zero"]["count"]
@@ -356,11 +353,6 @@ def on_track(ql):
     return " ".join(out)
 
 
-# ============================================================
-#  WEB CALL ENDPOINT — powers the tap-to-talk button.
-#  Uses the Retell SECRET key stored in Render's environment
-#  (RETELL_SECRET_KEY). The secret never reaches the browser.
-# ============================================================
 @app.route("/webcall", methods=["POST", "OPTIONS"])
 def webcall():
     if request.method == "OPTIONS":
@@ -377,6 +369,7 @@ def webcall():
     body = request.get_json(silent=True) or {}
     agent_id = body.get("agent_id", DEFAULT_AGENT_ID)
 
+    print("WEBCALL: calling Retell with agent_id =", repr(agent_id), "secret_len =", len(secret), flush=True)
     try:
         r = requests.post(
             "https://api.retellai.com/v2/create-web-call",
@@ -385,8 +378,10 @@ def webcall():
             timeout=15,
         )
     except Exception as e:
+        print("WEBCALL ERROR: could not reach Retell:", str(e), flush=True)
         return jsonify({"error": "Could not reach Retell", "detail": str(e)}), 502
 
+    print("WEBCALL: Retell responded status =", r.status_code, "body =", r.text, flush=True)
     if r.status_code not in (200, 201):
         return jsonify({"error": "Retell error", "detail": r.text}), 502
 
